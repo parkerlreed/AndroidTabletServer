@@ -39,9 +39,17 @@ Place [AndroidTablet.json](https://gist.github.com/dbalatoni13/8f57ebf32a07724df
 Then add a udev rule so OpenTabletDriver can open the device:
 
 ```bash
-echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05dc", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/99-android-tablet.rules
+echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05dc", MODE="0660", GROUP="input"' | sudo tee /etc/udev/rules.d/99-android-tablet.rules
 sudo udevadm control --reload-rules
 ```
+
+Make sure your user is in the `input` group:
+
+```bash
+sudo usermod -aG input $USER
+```
+
+Log out and back in for the group change to take effect.
 
 Restart OpenTabletDriver and the tablet should be detected. Edit `Width`, `Height`, `MaxX`, and `MaxY` in the JSON to match your device's physical screen dimensions (mm) and the `MaxX`/`MaxY` values shown in the app's notification after touching the screen with the pen.
 
