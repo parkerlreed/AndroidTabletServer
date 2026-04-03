@@ -45,6 +45,8 @@ sudo udevadm control --reload-rules
 
 Restart OpenTabletDriver and the tablet should be detected. Edit `Width`, `Height`, `MaxX`, and `MaxY` in the JSON to match your device's physical screen dimensions (mm) and the `MaxX`/`MaxY` values shown in the app's notification after touching the screen with the pen.
 
+----
+
 This is a modification of USB/IP server for Android. It lets you use your Android pen tablet as a PC graphics tablet with the help of OpenTabletDriver. Tested on a Samsung Galaxy Tab S9+. It currently supports pressure and up to two pen buttons, no tilt yet.
 
 # Installation
