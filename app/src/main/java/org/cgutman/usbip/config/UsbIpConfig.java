@@ -1,6 +1,8 @@
 package org.cgutman.usbip.config;
 
+import org.cgutman.usbip.service.TabletData;
 import org.cgutman.usbip.service.UsbIpService;
+import org.cgutman.usbip.usb.MockDeviceConnection;
 import org.cgutman.usbipserverforandroid.R;
 
 import android.Manifest;
@@ -8,7 +10,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Point;
 import android.os.Bundle;
-import android.util.DisplayMetrics;
 import android.view.MotionEvent;
 
 import androidx.activity.ComponentActivity;
@@ -26,31 +27,60 @@ public class UsbIpConfig extends ComponentActivity {
                 startService(new Intent(UsbIpConfig.this, UsbIpService.class));
             });
 
+    private void enqueueTabletData(MockDeviceConnection dev, boolean penInRange,
+                                    int x, int y, int pressure,
+                                    boolean buttonPrimary, boolean buttonSecondary) {
+        TabletData data = new TabletData();
+        data.penInRange = penInRange;
+        data.x = x;
+        data.y = y;
+        data.pressure = pressure;
+        data.buttonPrimaryPressed = buttonPrimary;
+        data.buttonSecondaryPressed = buttonSecondary;
+        dev.pendingData.offer(data);
+    }
+
+    private static final long MIN_SAMPLE_INTERVAL_MS = 1000 / 240; // ~4ms for 240Hz
+    private long lastSampleTimeMs = 0;
+
     private void handlePenTouchOrHover(MotionEvent event) {
-        int x = Math.round(event.getRawX() * event.getXPrecision());
-        int y = Math.round(event.getRawY() * event.getYPrecision());
-        int pressure = Math.round(event.getPressure() * 4095);
-        // TODO
-//        float orientation = event.getOrientation();
-//        float tilt = event.getAxisValue(MotionEvent.AXIS_TILT);
+        MockDeviceConnection dev = UsbIpService.activePenDevice;
+
         boolean buttonPrimary = event.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY);
         boolean buttonSecondary = event.isButtonPressed(MotionEvent.BUTTON_STYLUS_SECONDARY);
-//        System.out.println(String.format("Orientation: %f", orientation));
-//        System.out.println(String.format("Tilt: %f", tilt));
 
-        Intent broadcast = new Intent("position");
-        broadcast.putExtra("x", x);
-        broadcast.putExtra("y", y);
-        broadcast.putExtra("pressure", pressure);
-        broadcast.putExtra("buttonPrimary", buttonPrimary);
-        broadcast.putExtra("buttonSecondary", buttonSecondary);
+        float xPrecision = event.getXPrecision();
+        float yPrecision = event.getYPrecision();
 
-        sendBroadcast(broadcast);
+        // Drain historical samples, skipping any that are closer together than 240Hz allows
+        for (int i = 0; i < event.getHistorySize(); i++) {
+            long t = event.getHistoricalEventTime(i);
+            if (t - lastSampleTimeMs < MIN_SAMPLE_INTERVAL_MS) continue;
+            lastSampleTimeMs = t;
+            int hx = Math.round(event.getHistoricalX(0, i) * xPrecision);
+            int hy = Math.round(event.getHistoricalY(0, i) * yPrecision);
+            int hp = Math.round(event.getHistoricalPressure(0, i) * 4095);
+            if (dev != null) {
+                enqueueTabletData(dev, true, hx, hy, hp, buttonPrimary, buttonSecondary);
+            }
+        }
+
+        // Current sample
+        long t = event.getEventTime();
+        if (t - lastSampleTimeMs >= MIN_SAMPLE_INTERVAL_MS) {
+            lastSampleTimeMs = t;
+            int x = Math.round(event.getRawX() * xPrecision);
+            int y = Math.round(event.getRawY() * yPrecision);
+            int pressure = Math.round(event.getPressure() * 4095);
+            if (dev != null) {
+                enqueueTabletData(dev, true, x, y, pressure, buttonPrimary, buttonSecondary);
+            }
+        }
 
         if (!screenSizeSet) {
             Intent broadcastSize = new Intent("maxSize");
-            broadcastSize.putExtra("maxX", (int)Math.ceil(screenSize.x * event.getXPrecision()));
-            broadcastSize.putExtra("maxY", (int)Math.ceil(screenSize.y * event.getYPrecision()));
+            broadcastSize.putExtra("maxX", (int)Math.ceil(screenSize.x * xPrecision));
+            broadcastSize.putExtra("maxY", (int)Math.ceil(screenSize.y * yPrecision));
             sendBroadcast(broadcastSize);
             screenSizeSet = true;
         }

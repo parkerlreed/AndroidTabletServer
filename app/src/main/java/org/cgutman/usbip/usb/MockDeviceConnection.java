@@ -7,6 +7,8 @@ import org.cgutman.usbip.service.TabletData;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 class Result {
     public final boolean handled;
@@ -19,7 +21,8 @@ class Result {
 }
 
 public class MockDeviceConnection {
-    public final TabletData tabletData = new TabletData();
+    public final LinkedBlockingQueue<TabletData> pendingData = new LinkedBlockingQueue<>();
+    private final TabletData lastData = new TabletData();
 
     private final ByteBuffer descriptor;
     private final ByteBuffer configuration;
@@ -61,7 +64,7 @@ public class MockDeviceConnection {
                 .put((byte) 0) // bInterfaceNumber
                 .put((byte) 0) // bAlternateSetting=0,
                 .put((byte) 1) // bNumEndpoints=1,
-                .put((byte) 0xFF) // bInterfaceClass=3,
+                .put((byte) 0x03) // bInterfaceClass=HID,
                 .put((byte) 0) // bInterfaceSubClass=1,
                 .put((byte) 0) // bInterfaceProtocol=2, 2 is mouse, 0 is None
                 .put((byte) 0); // iInterface=0)
@@ -73,7 +76,7 @@ public class MockDeviceConnection {
                 .put((byte) 0) // bCountryCode
                 .put((byte) 1) // bNumDescriptors
                 .put((byte) 0x22) // bDescriptprType2
-                .putShort((short) 0x34); // wDescriptionLength
+                .putShort((short) 90); // wDescriptionLength
 
         // endpoint
         configuration.put((byte) 7) // bLength
@@ -84,36 +87,65 @@ public class MockDeviceConnection {
                 .put((byte) 1); // bInterval 1 ms
 
 
-        initialReport = ByteBuffer.allocate(52);
+        // 90-byte report descriptor matching the 12-byte report from bulkTransfer():
+        //   byte 0:     report ID (1)
+        //   byte 1:     flags (bit1=btn1, bit2=btn2, bit5=inRange)
+        //   bytes 2-3:  X (int16 LE)
+        //   bytes 4-5:  Y (int16 LE)
+        //   bytes 6-7:  pressure (int16 LE, 0-4095)
+        //   bytes 8-9:  tiltX (int16 LE)
+        //   bytes 10-11: tiltY (int16 LE)
+        initialReport = ByteBuffer.allocate(90);
         initialReport.order(ByteOrder.LITTLE_ENDIAN);
-        // maybe we don't have to change this at all... I think it's only important for HID devices, we can just send raw data
-        initialReport.put((byte) 0x05).put((byte) 0x0D)   // Usage Page (Digitizer)
-                .put((byte) 0x09).put((byte) 0x00)        // Usage (Undefined)
-                .put((byte) 0xa1).put((byte) 0x01)        // Collection (Application)
-                .put((byte) 0x09).put((byte) 0x01)        // Usage (Pointer)
-                .put((byte) 0xa1).put((byte) 0x00)        // Collection (Physical)
-                .put((byte) 0x05).put((byte) 0x09)        // Usage Page (Button)
-                .put((byte) 0x19).put((byte) 0x01)        // Usage Minimum (1)
-                .put((byte) 0x29).put((byte) 0x03)        // Usage Maximum (3)
-                .put((byte) 0x15).put((byte) 0x00)        // Logical Minimum (0)
-                .put((byte) 0x25).put((byte) 0x01)        // Logical Maximum (1)
-                .put((byte) 0x95).put((byte) 0x03)        // Report Count (3)
-                .put((byte) 0x75).put((byte) 0x01)        // Report Size (1)
-                .put((byte) 0x81).put((byte) 0x02)        // Input (Data, Variable, Absolute)
-                .put((byte) 0x95).put((byte) 0x01)        // Report Count (1)
-                .put((byte) 0x75).put((byte) 0x05)        // Report Size (5)
-                .put((byte) 0x81).put((byte) 0x01)        // Input (Constant)
-                .put((byte) 0x05).put((byte) 0x01)        // Usage Page (Generic Desktop)
-                .put((byte) 0x09).put((byte) 0x30)        // Usage (X)
-                .put((byte) 0x09).put((byte) 0x31)        // Usage (Y)
-                .put((byte) 0x09).put((byte) 0x38)        // Usage (Wheel)
-                .put((byte) 0x15).put((byte) 0x81)        // Logical Minimum (-0x7f)
-                .put((byte) 0x25).put((byte) 0x7f)        // Logical Maximum (0x7f)
-                .put((byte) 0x75).put((byte) 0x08)        // Report Size (8)
-                .put((byte) 0x95).put((byte) 0x03)        // Report Count (3)
-                .put((byte) 0x81).put((byte) 0x06)        // Input (Data, Variable, Relative)
-                .put((byte) 0xc0)                         // End Collection
-                .put((byte) 0xc0);                        // End Collection
+        initialReport
+                .put((byte) 0x05).put((byte) 0x0D)         // Usage Page (Digitizer)
+                .put((byte) 0x09).put((byte) 0x02)         // Usage (Pen)
+                .put((byte) 0xA1).put((byte) 0x01)         // Collection (Application)
+                .put((byte) 0x85).put((byte) 0x01)         // Report ID (1)
+                // byte 1: flags - 8 bits
+                .put((byte) 0x09).put((byte) 0x32)         // Usage (In Range)
+                .put((byte) 0x75).put((byte) 0x08)         // Report Size (8)
+                .put((byte) 0x95).put((byte) 0x01)         // Report Count (1)
+                .put((byte) 0x81).put((byte) 0x02)         // Input (Data, Variable, Absolute)
+                // bytes 2-3: X - 16 bits
+                .put((byte) 0x05).put((byte) 0x01)         // Usage Page (Generic Desktop)
+                .put((byte) 0x09).put((byte) 0x30)         // Usage (X)
+                .put((byte) 0x15).put((byte) 0x00)         // Logical Minimum (0)
+                .put((byte) 0x26).put((byte) 0xFF).put((byte) 0x7F) // Logical Maximum (32767)
+                .put((byte) 0x75).put((byte) 0x10)         // Report Size (16)
+                .put((byte) 0x95).put((byte) 0x01)         // Report Count (1)
+                .put((byte) 0x81).put((byte) 0x02)         // Input (Data, Variable, Absolute)
+                // bytes 4-5: Y - 16 bits
+                .put((byte) 0x09).put((byte) 0x31)         // Usage (Y)
+                .put((byte) 0x15).put((byte) 0x00)         // Logical Minimum (0)
+                .put((byte) 0x26).put((byte) 0xFF).put((byte) 0x7F) // Logical Maximum (32767)
+                .put((byte) 0x75).put((byte) 0x10)         // Report Size (16)
+                .put((byte) 0x95).put((byte) 0x01)         // Report Count (1)
+                .put((byte) 0x81).put((byte) 0x02)         // Input (Data, Variable, Absolute)
+                // bytes 6-7: pressure - 16 bits
+                .put((byte) 0x05).put((byte) 0x0D)         // Usage Page (Digitizer)
+                .put((byte) 0x09).put((byte) 0x30)         // Usage (Tip Pressure)
+                .put((byte) 0x15).put((byte) 0x00)         // Logical Minimum (0)
+                .put((byte) 0x26).put((byte) 0xFF).put((byte) 0x0F) // Logical Maximum (4095)
+                .put((byte) 0x75).put((byte) 0x10)         // Report Size (16)
+                .put((byte) 0x95).put((byte) 0x01)         // Report Count (1)
+                .put((byte) 0x81).put((byte) 0x02)         // Input (Data, Variable, Absolute)
+                // bytes 8-9: tiltX - 16 bits signed
+                .put((byte) 0x05).put((byte) 0x01)         // Usage Page (Generic Desktop)
+                .put((byte) 0x09).put((byte) 0x33)         // Usage (Rx)
+                .put((byte) 0x16).put((byte) 0x01).put((byte) 0x80) // Logical Minimum (-32767)
+                .put((byte) 0x26).put((byte) 0xFF).put((byte) 0x7F) // Logical Maximum (32767)
+                .put((byte) 0x75).put((byte) 0x10)         // Report Size (16)
+                .put((byte) 0x95).put((byte) 0x01)         // Report Count (1)
+                .put((byte) 0x81).put((byte) 0x02)         // Input (Data, Variable, Absolute)
+                // bytes 10-11: tiltY - 16 bits signed
+                .put((byte) 0x09).put((byte) 0x34)         // Usage (Ry)
+                .put((byte) 0x16).put((byte) 0x01).put((byte) 0x80) // Logical Minimum (-32767)
+                .put((byte) 0x26).put((byte) 0xFF).put((byte) 0x7F) // Logical Maximum (32767)
+                .put((byte) 0x75).put((byte) 0x10)         // Report Size (16)
+                .put((byte) 0x95).put((byte) 0x01)         // Report Count (1)
+                .put((byte) 0x81).put((byte) 0x02)         // Input (Data, Variable, Absolute)
+                .put((byte) 0xC0);                          // End Collection
     }
 
     public void close() {
@@ -143,9 +175,10 @@ public class MockDeviceConnection {
             if (request == 0x06) { // Get Descriptor
                 // send initial report
                 if (value == 0x2200) {
+                    int reportLen = Math.min(length, initialReport.capacity());
                     initialReport.rewind();
-                    initialReport.get(buffer, 0, 52);
-                    res = new Result(true, 52);
+                    initialReport.get(buffer, 0, reportLen);
+                    res = new Result(true, reportLen);
                 }
             }
         } else if (requestType == 0x21) { // Host Request
@@ -158,18 +191,35 @@ public class MockDeviceConnection {
 
     public int bulkTransfer(byte[] buffer, int length, int timeout) {
         if (length == 12) {
+            TabletData data;
+            try {
+                data = pendingData.poll(timeout, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                return -110; // ETIMEDOUT
+            }
+            if (data == null) {
+                return -110; // ETIMEDOUT - no new sample, caller will retry
+            }
+            lastData.penInRange = data.penInRange;
+            lastData.x = data.x;
+            lastData.y = data.y;
+            lastData.pressure = data.pressure;
+            lastData.tiltX = data.tiltX;
+            lastData.tiltY = data.tiltY;
+            lastData.buttonPrimaryPressed = data.buttonPrimaryPressed;
+            lastData.buttonSecondaryPressed = data.buttonSecondaryPressed;
             ByteBuffer input = ByteBuffer.allocate(length);
             input.order(ByteOrder.LITTLE_ENDIAN);
             input.put((byte) 1); // to comply with other parser
-            byte penByte = (byte) ((tabletData.penInRange ? 0x20 : 0) |
-                    (tabletData.buttonPrimaryPressed ? 2 : 0)
-                    | (tabletData.buttonSecondaryPressed ? 4 : 0));
+            byte penByte = (byte) ((lastData.penInRange ? 0x20 : 0) |
+                    (lastData.buttonPrimaryPressed ? 2 : 0)
+                    | (lastData.buttonSecondaryPressed ? 4 : 0));
             input.put(penByte);
-            input.putShort((short) tabletData.x); // X
-            input.putShort((short) tabletData.y); // Y
-            input.putShort((short) tabletData.pressure); // pressure
-            input.putShort((short) tabletData.tiltX); // tiltX
-            input.putShort((short) tabletData.tiltY); // tiltY
+            input.putShort((short) lastData.x);
+            input.putShort((short) lastData.y);
+            input.putShort((short) lastData.pressure);
+            input.putShort((short) lastData.tiltX);
+            input.putShort((short) lastData.tiltY);
 
             input.rewind();
             input.get(buffer);
@@ -181,7 +231,7 @@ public class MockDeviceConnection {
     private Result handleGetDescriptor(int request, int value, int index, byte[] buffer, int length) {
         if (value == 0x100) { // Device
             descriptor.rewind(); // this resets position to 0, needed for .get to work
-            descriptor.get(buffer); // copy it over
+            descriptor.get(buffer, 0, UsbDeviceDescriptor.DESCRIPTOR_SIZE); // copy it over
             return new Result(true, UsbDeviceDescriptor.DESCRIPTOR_SIZE);
         } else if (value == 0x200) { // Configuration
             configuration.rewind(); // this resets position to 0, needed for .get to work

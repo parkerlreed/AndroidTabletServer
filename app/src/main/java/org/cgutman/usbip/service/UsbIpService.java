@@ -63,6 +63,8 @@ public class UsbIpService extends Service implements UsbRequestHandler {
     private WifiLock highPerfWifiLock;
     private WifiLock lowLatencyWifiLock;
 
+    public static volatile MockDeviceConnection activePenDevice = null;
+
     private int maxX = 0;
     private int maxY = 0;
 
@@ -138,15 +140,12 @@ public class UsbIpService extends Service implements UsbRequestHandler {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
+                MockDeviceConnection dev = activePenDevice;
+                if (dev == null) return;
                 if (action.equalsIgnoreCase("penOutOfRange")) {
-                    connections.get(0).devConn.tabletData.penInRange = false;
-                } else if (action.equalsIgnoreCase("position")) {
-                    connections.get(0).devConn.tabletData.penInRange = true;
-                    connections.get(0).devConn.tabletData.x = intent.getIntExtra("x", 0);
-                    connections.get(0).devConn.tabletData.y = intent.getIntExtra("y", 0);
-                    connections.get(0).devConn.tabletData.pressure = intent.getIntExtra("pressure", 0);
-                    connections.get(0).devConn.tabletData.buttonPrimaryPressed = intent.getBooleanExtra("buttonPrimary", false);
-                    connections.get(0).devConn.tabletData.buttonSecondaryPressed = intent.getBooleanExtra("buttonSecondary", false);
+                    TabletData data = new TabletData();
+                    data.penInRange = false;
+                    dev.pendingData.offer(data);
                 }
             }
         };
@@ -514,6 +513,7 @@ public class UsbIpService extends Service implements UsbRequestHandler {
 
         connections.put(0, context);
         socketMap.put(s, context);
+        activePenDevice = devConn;
 
         if (!broadcastReceiverRegistered) {
             IntentFilter intentFilter = new IntentFilter();
@@ -542,6 +542,7 @@ public class UsbIpService extends Service implements UsbRequestHandler {
         }
 
         // Clear the this attachment's context
+        activePenDevice = null;
         connections.clear();
 
         // Signal queue death
