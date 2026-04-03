@@ -1,5 +1,50 @@
 # Android Tablet Server for OpenTabletDriver
 
+# Linux
+
+## Loading the kernel module
+
+```bash
+sudo modprobe vhci-hcd
+```
+
+This needs to be done after every boot, or you can make it persistent:
+
+```bash
+echo vhci-hcd | sudo tee /etc/modules-load.d/vhci-hcd.conf
+```
+
+## Attaching the tablet
+
+Wireless:
+```bash
+sudo usbip attach -b 1-1 -r <tablet IP address>
+```
+
+Wired (after `adb forward tcp:3240 tcp:3240`):
+```bash
+sudo usbip attach -b 1-1 -r 127.0.0.1
+```
+
+The attach command must be rerun each time the app is closed.
+
+## OpenTabletDriver configuration
+
+Place [AndroidTablet.json](https://gist.github.com/dbalatoni13/8f57ebf32a07724df076a1165a520dbd) in:
+
+```
+~/.config/OpenTabletDriver/Configurations/
+```
+
+Then add a udev rule so OpenTabletDriver can open the device:
+
+```bash
+echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05dc", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/99-android-tablet.rules
+sudo udevadm control --reload-rules
+```
+
+Restart OpenTabletDriver and the tablet should be detected. Edit `Width`, `Height`, `MaxX`, and `MaxY` in the JSON to match your device's physical screen dimensions (mm) and the `MaxX`/`MaxY` values shown in the app's notification after touching the screen with the pen.
+
 This is a modification of USB/IP server for Android. It lets you use your Android pen tablet as a PC graphics tablet with the help of OpenTabletDriver. Tested on a Samsung Galaxy Tab S9+. It currently supports pressure and up to two pen buttons, no tilt yet.
 
 # Installation
